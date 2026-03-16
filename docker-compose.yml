@@ -12,8 +12,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - PLANNING_MODEL=anthropic.claude-3-haiku-20240307-v1:0
-      - SPECIALIST_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
-      - SYNTHESIZER_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
+      - SPECIALIST_MODEL=anthropic.claude-3-haiku-20240307-v1:0
+      - SYNTHESIZER_MODEL=anthropic.claude-3-haiku-20240307-v1:0
       # LAB 3: Error Simulation Configuration for Baseline Analysis
       - ERROR_SIMULATION=true
       - ERROR_SIMULATION_RATE=0.15
@@ -21,6 +21,7 @@ services:
       - MAX_LATENCY_MS=1000
       # Datadog Environment Variables
       - DD_API_KEY
+      - DD_SITE=${DD_SITE:-datadoghq.com}
       - DD_ENV=dev
       - DD_SERVICE=swagbot
       - DD_VERSION=2.0.0

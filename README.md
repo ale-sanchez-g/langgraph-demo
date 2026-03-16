@@ -102,8 +102,11 @@ FLASK_HOST=0.0.0.0
 FLASK_PORT=3000
 
 # ─── Datadog ──────────────────────────────────────────────────────────────────
-DD_API_KEY=                 # required
-DD_APP_KEY=                 # required (for evaluation submission)
+DD_SITE=datadoghq.com       # required — match your account site:
+                            #   US1: datadoghq.com  |  US3: us3.datadoghq.com
+                            #   EU:  datadoghq.eu   |  AP1: ap1.datadoghq.com
+DD_API_KEY=                 # required — Org Settings → API Keys
+DD_APP_KEY=                 # required — Org Settings → Application Keys (40-char hex)
 DD_RUM_CLIENT_TOKEN=        # required for browser RUM
 DD_RUM_APPLICATION_ID=      # required for browser RUM
 DD_ENV=dev
@@ -367,3 +370,21 @@ lsof -i :3000        # find the process
 kill -9 <PID>
 docker compose up -d
 ```
+
+
+## Experiments
+
+The `swagbot_utils_experiments.py` script contains utilities for dataset creation, evaluation, and other experiments. For example, to create a dataset of 100 requests related to the "product specialist" category:
+
+```bash
+docker compose exec swagbot python /app/swagbot_utils_experiments.py --create-dataset product_specialist
+```
+
+To compare the performance of all three agents (customer service, product specialist, promotion specialist) on the "product specialist" dataset using direct agent prompting:
+
+```bash
+docker compose exec swagbot python /app/swagbot_utils_experiments.py \
+  --compare-all-models \
+  --dataset product_specialist \
+  --direct-agent
+  ```
