@@ -299,15 +299,6 @@ docker compose exec agent agent status
 
 ## Troubleshooting
 
-**Images not showing in responses**
-
-Run the setup script to create the placeholder images, then restart the container so Flask can serve them:
-
-```bash
-python scripts/setup-images.py
-./restart-bot.sh
-```
-
 **Container fails to start**
 
 Check that all required environment variables are set:
