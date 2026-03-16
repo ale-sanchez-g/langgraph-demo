@@ -1,0 +1,37 @@
+{
+  "planning": {
+    "id": "swagbot.planning",
+    "version": "2.0.0",
+    "description": "Added classification accuracy guidelines"
+  },
+  "orchestrator": {
+    "id": "swagbot.orchestrator",
+    "version": "2.0.0",
+    "description": "Added routing efficiency optimization"
+  },
+  "product_specialist": {
+    "id": "swagbot.product_specialist",
+    "version": "2.0.0",
+    "description": "Added data accuracy verification requirements"
+  },
+  "promotion_specialist": {
+    "id": "swagbot.promotion_specialist",
+    "version": "2.0.0",
+    "description": "Added value optimization guidelines"
+  },
+  "customer_service": {
+    "id": "swagbot.customer_service",
+    "version": "2.0.0",
+    "description": "Added resolution priority guidelines"
+  },
+  "feedback_handler": {
+    "id": "swagbot.feedback_handler",
+    "version": "2.0.0",
+    "description": "Added continuous improvement focus"
+  },
+  "synthesizer": {
+    "id": "swagbot.synthesizer",
+    "version": "2.1.0",
+    "description": "Optimized token usage while maintaining v2.0 quality improvements"
+  }
+}

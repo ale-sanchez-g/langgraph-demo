@@ -1,0 +1,14 @@
+flask==3.0.3
+flask-cors==4.0.1
+langchain-core
+langchain-aws
+langchain-google-vertexai
+langchain-openai
+langgraph
+boto3==1.34.131
+botocore==1.34.131
+ddtrace==3.14.0
+requests==2.32.3
+python-dotenv==1.0.1
+google-cloud-aiplatform
+grpcio==1.60.1 

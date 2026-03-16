@@ -1,0 +1,81 @@
+services:
+  swagbot:
+    image: public.ecr.aws/v6x4t1k2/dpn-workshops/swagbot:langgraph.v0.6
+    platform: linux/amd64
+    environment:
+      ## FLASK Configs:
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=3000
+      # Platform selector (bedrock)
+      - LLM_PLATFORM=bedrock
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - PLANNING_MODEL=anthropic.claude-3-haiku-20240307-v1:0
+      - SPECIALIST_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
+      - SYNTHESIZER_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
+      # LAB 3: Error Simulation Configuration for Baseline Analysis
+      - ERROR_SIMULATION=true
+      - ERROR_SIMULATION_RATE=0.15
+      - LATENCY_SIMULATION=true
+      - MAX_LATENCY_MS=1000
+      # Datadog Environment Variables
+      - DD_API_KEY
+      - DD_ENV=dev
+      - DD_SERVICE=swagbot
+      - DD_VERSION=2.0.0
+      - DD_AGENT_HOST=agent
+      - SWAGBOT_DD_APP_KEY=${DD_APP_KEY}
+      - DD_LOGS_INJECTION=true
+      - DD_RUNTIME_METRICS_ENABLED=true
+      # RUM
+      - DD_RUM_CLIENT_TOKEN=${DD_RUM_CLIENT_TOKEN}
+      - DD_RUM_APPLICATION_ID=${DD_RUM_APPLICATION_ID}
+      # LLMObs Configuration
+      - DD_LLMOBS_ENABLED=1
+      - DD_LLMOBS_ML_APP=swagbot
+      - DD_LLMOBS_AGENTLESS_ENABLED=0
+    # Datadog Labels
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "python", "service": "swagbot"}]'
+      com.datadoghq.tags.env: "dev"
+      com.datadoghq.tags.service: "swagbot"
+      com.datadoghq.tags.version: "2.0.0"
+    volumes:
+      - ./app/:/app:ro
+    tmpfs:
+      - /tmp:mode=1777,size=100M
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - 3000:3000
+    entrypoint: ["/bin/bash", "-c", "ddtrace-run python swagbot_app.py & sleep 2 && bash /app/scripts/interactions-script.sh && fg"]
+  agent:
+    image: gcr.io/datadoghq/agent:7
+    environment:
+      - DD_API_KEY
+      - DD_ENV=dev
+      - DD_LOGS_ENABLED=true
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+      - DD_PROCESS_AGENT_ENABLED=true
+      - DD_APM_ENABLED=true
+      - DD_APM_NON_LOCAL_TRAFFIC=true
+      - DD_APM_RECEIVER_SOCKET=/var/run/datadog/apm.socket
+      - DD_DOGSTATSD_SOCKET=/var/run/datadog/dsd.socket
+      - DD_HOSTNAME=swagbot-host
+      - DD_LOGS_CONFIG_AUTO_MULTI_LINE_DETECTION=true
+      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
+    ports:
+      - 127.0.0.1:8126:8126/tcp
+    read_only: true
+    tmpfs:
+      - /etc/datadog-agent:mode=0755,size=16M
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "agent", "service": "agent"}]'

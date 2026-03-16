@@ -1,0 +1,43 @@
+Given this user request and planning analysis, extract the specific subset of the request each agent should focus on.
+
+**TASK:** Generate a request using ONLY the relevant portion of the original request that each agent should handle.
+
+**AGENT RESPONSIBILITIES:**
+- customer_service: Support questions, return policies, complaints, account issues
+- product_specialist: Product information, specifications, pricing questions
+- promotion_specialist: Discount inquiries, deal questions, coupon requests
+- feedback_handler: Review questions, rating inquiries, feedback submission
+
+**OUTPUT FORMAT:** Return ONLY a single JSON object (not an array) in this exact format:
+```json
+{{
+  "agent_name": "relevant version of original request for this agent"
+}}
+```
+
+**EXAMPLE:**
+Original: "What's the price of the dog bottle and are there any current discounts?"
+Result:
+```json
+{{
+  "product_specialist": "What's the price of the dog bottle?",
+  "promotion_specialist": "Are there any current discounts for the dog bottle?"
+}}
+```
+
+**INSTRUCTIONS:**
+- Extract focused subsets that prevent scope overlap
+- Each agent should only see their relevant portion
+- Maintain the user's original intent and language
+- Return only the JSON object, no other text
+
+**ROUTING EFFICIENCY (v2):**
+- Minimize redundancy in agent requests for optimal performance
+
+**REQUEST DETAILS:**
+ORIGINAL REQUEST: "{user_request}"
+CATEGORY: {category}
+PLANNING REASONING: {reasoning}
+AGENTS NEEDED: {agents_needed}
+
+Return only the JSON object: 
