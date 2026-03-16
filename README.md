@@ -126,46 +126,9 @@ MAX_LATENCY_MS=1000
 
 ## Quick Start
 
-### 1. Placeholder Product Images
-
-The application references product images under `app/static/images/`. The folder ships empty. Before starting the stack you must either:
-
-**Option A — generate placeholder images (recommended for local development):**
-
-```bash
-# With Pillow installed (produces coloured labelled images)
-pip install Pillow
-python scripts/setup-images.py
-
-# Without Pillow (produces minimal valid JPEG/PNG stubs)
-python scripts/setup-images.py
-```
-
-The following images will be created:
-
-| File | Product |
-|------|---------|
-| `headphones.jpg` | Dog Headphones |
-| `steel-bottle.jpg` | Dog Steel Bottle |
-| `t-shirt.jpg` | Dog T-Shirt |
-| `t-shirt-i-love-u.jpg` | Dog T-Shirt I Love You |
-| `sweatshirt-gray.jpg` | Dog Sweatshirt Gray |
-| `sweatshirt-black.jpg` | Dog Sweatshirt Black |
-| `notebook.jpg` | Dog Notebook |
-| `sko-notebook.jpg` | Dog SKO Notebook |
-| `mug.jpg` | Dog Mug |
-| `hoodie.png` | Dog Hoodie |
-| `plastic-bottle.png` | Dog Plastic Bottle |
-| `sticker-pack.png` | Dog Sticker Pack |
-| `beanie.png` | Dog Beanie |
-
-**Option B — supply your own images:**
-
-Drop real image files into `app/static/images/` using the filenames listed above.
-
 ---
 
-### 2. Start the Services
+### 1. Start the Services
 
 ```bash
 # Full start (swagbot + Datadog Agent)
