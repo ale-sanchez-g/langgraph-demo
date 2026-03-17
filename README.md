@@ -1,161 +1,151 @@
-# SwagBot — LangGraph Multi-Agent E-Commerce Chatbot
+# SwagBot - LangGraph Multi-Agent E-Commerce Chatbot
 
-SwagBot is a production-grade multi-agent e-commerce chatbot built with [LangGraph](https://github.com/langchain-ai/langgraph) and instrumented with [Datadog](https://www.datadoghq.com/) for full LLM observability. It intelligently routes customer requests to specialised AI agents that work in parallel to produce comprehensive, context-aware responses.
-
----
+SwagBot is a multi-agent e-commerce chatbot built with LangGraph and instrumented with Datadog APM + LLM Observability. Requests are analyzed, routed to specialized agents in parallel, and synthesized into a single HTML response.
 
 ## Table of Contents
 
 - [Architecture](#architecture)
+- [Implemented Functionality](#implemented-functionality)
 - [Prerequisites](#prerequisites)
 - [Environment Variables](#environment-variables)
 - [Quick Start](#quick-start)
-  - [1. Placeholder Product Images](#1-placeholder-product-images)
-  - [2. Start the Services](#2-start-the-services)
-- [Available Endpoints](#available-endpoints)
-- [Project Structure](#project-structure)
+- [API Endpoints](#api-endpoints)
 - [LLM Platform Support](#llm-platform-support)
-- [Error & Latency Simulation](#error--latency-simulation)
-- [Running the Interaction Script](#running-the-interaction-script)
-- [Datadog Observability](#datadog-observability)
+- [Open Prompt Manager (OPM)](#open-prompt-manager-opm)
+- [Error and Latency Simulation](#error-and-latency-simulation)
+- [Interaction Traffic Generator](#interaction-traffic-generator)
+- [Experiments](#experiments)
+- [Project Structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
-
----
 
 ## Architecture
 
-User requests flow through a four-stage LangGraph pipeline:
+SwagBot uses this workflow pattern:
 
-```
-User Request
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│  1. PLANNING AGENT                                  │
-│     Analyses the request and decides which          │
-│     specialist agents are needed.                   │
-└─────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│  2. ORCHESTRATOR AGENT                              │
-│     Splits the request into focused sub-tasks,      │
-│     one per specialist, and pre-loads the           │
-│     relevant knowledge-base documents.              │
-└─────────────────────────────────────────────────────┘
-    │
-    ▼
-┌──────────────┬──────────────┬──────────────┬────────┐
-│  3. PARALLEL SPECIALIST AGENTS                      │
-├──────────────┼──────────────┼──────────────┼────────┤
-│ Customer     │ Product      │ Promotion    │Feedback│
-│ Service      │ Specialist   │ Specialist   │Handler │
-└──────────────┴──────────────┴──────────────┴────────┘
-    │ (fan-in)
-    ▼
-┌─────────────────────────────────────────────────────┐
-│  4. RESPONSE SYNTHESIZER                            │
-│     Combines all specialist outputs into a          │
-│     single, well-formatted HTML response.           │
-└─────────────────────────────────────────────────────┘
-    │
-    ▼
- Final HTML response returned to user
-```
+1. Planning Agent: classifies request and chooses specialists.
+2. Orchestrator Agent: creates focused tasks and loads selective knowledge sources.
+3. Specialist Agents (parallel):
+   - Customer Service
+   - Product Specialist
+   - Promotion Specialist
+   - Feedback Handler
+4. Response Synthesizer: combines specialist responses into final HTML.
 
-Each specialist agent uses RAG (Retrieval-Augmented Generation) — it only sees the subset of the knowledge base relevant to its domain.
+Each specialist runs retrieval + generation for its own scope. This keeps responses focused and improves trace clarity.
 
----
+## Implemented Functionality
+
+- Multi-platform LLM runtime selected by `LLM_PLATFORM` (`bedrock`, `openai`, `vertex`, `azure`).
+- Per-role model selection (`PLANNING_MODEL`, `SPECIALIST_MODEL`, `SYNTHESIZER_MODEL`).
+- Selective RAG loading based on routed agents (instead of loading all documents every time).
+- Datadog instrumentation for workflow, agents, retrieval, and LLM calls.
+- Frontend-to-backend trace correlation via Datadog headers and `span_context` payload.
+- User feedback ingestion endpoint (`/api/evaluate`) that submits score metrics to Datadog LLM Obs intake.
+- Prompt tracking and optional Open Prompt Management (OPM) integration via `OPM_BASE_URL`.
+- Runtime UI configuration endpoint (`/config`) exposing active models, logos, and display metadata.
+- Experiment suite for dataset creation and model comparison (`swagbot_utils_experiments.py`).
 
 ## Prerequisites
 
 | Requirement | Notes |
-|-------------|-------|
-| Docker ≥ 24 | |
-| Docker Compose v2 | Included with Docker Desktop |
-| AWS account | Required when `LLM_PLATFORM=bedrock` (default) |
-| Datadog account | Required for APM / LLM Observability |
-| Python 3.11+ | Only for the image-generation helper script |
-
-> If you want to use a different LLM provider (OpenAI, Google Vertex AI, Azure OpenAI) see [LLM Platform Support](#llm-platform-support).
-
----
+|---|---|
+| Docker Desktop | Includes Docker Compose v2 |
+| Datadog account | Required for APM, LLM Obs, and evaluation API |
+| AWS account | Required only for `LLM_PLATFORM=bedrock` |
+| Provider credentials | Required for non-bedrock platforms (OpenAI, Vertex, Azure) |
+| Open Prompt Manager (OPM) | Optional — enables remote prompt management; falls back to local files when unavailable |
 
 ## Environment Variables
 
-Copy the block below into a `.env` file in the project root and fill in your values. All variables marked **required** must be set before starting the stack.
+Create a `.env` file at repository root.
 
 ```dotenv
-# ─── AWS Bedrock ──────────────────────────────────────────────────────────────
-AWS_ACCESS_KEY_ID=          # required (bedrock)
-AWS_SECRET_ACCESS_KEY=      # required (bedrock)
-AWS_REGION=us-east-1
-
-# ─── LLM Model Selection ──────────────────────────────────────────────────────
-LLM_PLATFORM=bedrock        # bedrock | openai | vertex | azure
-PLANNING_MODEL=anthropic.claude-3-haiku-20240307-v1:0
-SPECIALIST_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
-SYNTHESIZER_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
-
-# ─── Flask ────────────────────────────────────────────────────────────────────
+# Flask
 FLASK_HOST=0.0.0.0
 FLASK_PORT=3000
 
-# ─── Datadog ──────────────────────────────────────────────────────────────────
-DD_SITE=datadoghq.com       # required — match your account site:
-                            #   US1: datadoghq.com  |  US3: us3.datadoghq.com
-                            #   EU:  datadoghq.eu   |  AP1: ap1.datadoghq.com
-DD_API_KEY=                 # required — Org Settings → API Keys
-DD_APP_KEY=                 # required — Org Settings → Application Keys (40-char hex)
-DD_RUM_CLIENT_TOKEN=        # required for browser RUM
-DD_RUM_APPLICATION_ID=      # required for browser RUM
+# LLM platform and models
+LLM_PLATFORM=bedrock                 # bedrock | openai | vertex | azure
+PLANNING_MODEL=anthropic.claude-3-haiku-20240307-v1:0
+SPECIALIST_MODEL=anthropic.claude-3-haiku-20240307-v1:0
+SYNTHESIZER_MODEL=anthropic.claude-3-haiku-20240307-v1:0
+
+# Bedrock
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
+
+# OpenAI
+OPENAI_API_KEY=
+
+# Vertex AI
+GOOGLE_PROJECT_ID=
+GOOGLE_LOCATION=us-central1
+
+# Azure OpenAI
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_ENDPOINT=
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# Datadog
+DD_API_KEY=
+DD_APP_KEY=                           # passed into container as SWAGBOT_DD_APP_KEY
+DD_SITE=datadoghq.com
 DD_ENV=dev
 DD_SERVICE=swagbot
 DD_VERSION=2.0.0
+DD_RUM_CLIENT_TOKEN=
+DD_RUM_APPLICATION_ID=
 
-# ─── Error / Latency Simulation (optional) ────────────────────────────────────
+# Optional UI/RUM helper
+SWAGBOT_URL=
+
+# LLM Observability toggles (set in docker-compose by default)
+DD_LLMOBS_ENABLED=1
+DD_LLMOBS_ML_APP=swagbot
+DD_LLMOBS_AGENTLESS_ENABLED=0
+
+# Prompt management
+OPM_BASE_URL=http://host.docker.internal
+
+# Error/latency simulation
 ERROR_SIMULATION=true
 ERROR_SIMULATION_RATE=0.15
 LATENCY_SIMULATION=true
 MAX_LATENCY_MS=1000
 ```
 
-> **Security note:** Never commit your `.env` file. It is listed in `.gitignore` by default.
+Notes:
 
----
+- App-level defaults in code are not always the same as docker-compose overrides.
+- For Vertex, configuration keys are `GOOGLE_PROJECT_ID` and `GOOGLE_LOCATION`.
 
 ## Quick Start
 
----
-
-### 1. Start the Services
-
 ```bash
-# Full start (swagbot + Datadog Agent)
+# Start all services
 docker compose up -d
 
-# Or use the helper scripts:
-./restart-containers.sh   # Full restart of all services
-./restart-bot.sh          # Restart only the swagbot container
+# Or use helper scripts
+./restart-containers.sh
+./restart-bot.sh
 ```
 
-Once running:
+Services:
 
-| URL | Description |
-|-----|-------------|
-| `http://localhost:3000` | Chat UI |
-| `http://localhost:3000/health` | Health check |
-| `http://localhost:3000/status` | Service status & configuration |
-| `http://localhost:3000/config` | Active LLM platform & model names |
-| `http://localhost:3000/categories` | Available request categories |
+- Chat UI: http://localhost:3000
+- Health: http://localhost:3000/health
+- Runtime status: http://localhost:3000/status
+- Active model/config view: http://localhost:3000/config
+- Categories: http://localhost:3000/categories
 
----
+## API Endpoints
 
-## Available Endpoints
-
-### `POST /data`
+### POST /data
 
 Main chat endpoint.
+
+Request:
 
 ```bash
 curl -X POST http://localhost:3000/data \
@@ -163,182 +153,243 @@ curl -X POST http://localhost:3000/data \
   -d '{"data": "Do you have any promotions on headphones?"}'
 ```
 
-Response: HTML string with the bot's answer.
+Response is JSON (not a raw HTML string). Important fields include:
 
----
+- `response`: final rendered HTML message.
+- `output`: workflow output text.
+- `category`: planner category.
+- `agents_needed`: selected specialists.
+- `documents` and `retrieved_count`: RAG evidence summary.
+- `agent_outputs`: per-agent outputs.
+- `workflow_path`: execution path.
+- `span_context`: trace metadata for feedback correlation.
 
-### `POST /api/evaluate`
+### GET /api/sample-requests
 
-Submit thumbs-up / thumbs-down feedback linked to a previous response.
+Returns sample requests loaded from `app/resources/sample-requests.txt`.
+
+### POST /api/evaluate
+
+Submits user feedback to Datadog LLM Obs evaluation intake.
+
+Request requirements:
+
+- `evaluation_type`: must be `thumbs_up` or `thumbs_down`.
+- `span_context`: required (`trace_id` and `span_id` used to join metric to span).
+
+Example:
 
 ```bash
 curl -X POST http://localhost:3000/api/evaluate \
   -H "Content-Type: application/json" \
   -d '{
-    "span_context": { ... },
+    "span_context": {"trace_id": "...", "span_id": "..."},
     "evaluation_type": "thumbs_up",
     "user_request": "Do you have any promotions on headphones?",
     "response_text": "..."
   }'
 ```
 
----
+### GET /
 
-### `GET /api/sample-requests`
+Renders the web UI from `app/templates/index.html` using dynamic platform and model metadata.
 
-Returns a list of pre-written sample requests from `app/resources/sample-requests.txt`.
+### GET /health
 
----
+Basic health payload with service and workflow markers.
 
-## Project Structure
+### GET /status
 
-```
-langgraph-demo/
-├── docker-compose.yml              # Docker services (swagbot + Datadog agent)
-├── restart-bot.sh                  # Quick-restart swagbot container
-├── restart-containers.sh           # Full restart of all containers
-├── scripts/
-│   └── setup-images.py             # Generate placeholder product images ← run first
-└── app/
-    ├── Dockerfile                  # Python 3.11 image
-    ├── requirements.txt            # Python dependencies
-    ├── swagbot_app.py              # Flask app & REST API endpoints
-    ├── swagbot_langgraph_workflow.py  # LangGraph agents & workflow graph
-    ├── swagbot_langgraph_config.py    # Multi-platform LLM configuration
-    ├── swagbot_utils.py            # HTML formatting & utility helpers
-    ├── swagbot_utils_experiments.py   # Experimental utilities
-    ├── resources/
-    │   ├── products.json           # Product catalogue (name, price, image path)
-    │   ├── faqs.json               # Frequently asked questions
-    │   ├── promotions.json         # Active promotions & coupon codes
-    │   ├── cs_info.json            # Customer service policies
-    │   ├── sample-requests.txt     # Example user queries for the UI
-    │   ├── prompt-planning.txt     # Planning agent system prompt
-    │   ├── prompt-orchestrator.txt # Orchestrator agent system prompt
-    │   ├── prompt-customer-service.txt
-    │   ├── prompt-product-specialist.txt
-    │   ├── prompt-promotion-specialist.txt
-    │   ├── prompt-feedback-handler.txt
-    │   ├── prompt-synthesizer.txt  # Final response synthesizer prompt
-    │   └── prompt-metadata.json    # Prompt versioning metadata
-    ├── scripts/
-    │   └── interactions-script.sh  # Automated curl test requests
-    └── static/
-        └── images/                 # Product images (empty — see Quick Start)
-```
+Returns service-level status, Datadog status, and configured categories/provider summary.
 
----
+### GET /config
+
+Returns current UI/runtime model configuration, platform branding fields, and workflow type.
+
+### GET /categories
+
+Returns category list from runtime configuration.
 
 ## LLM Platform Support
 
-Set `LLM_PLATFORM` in your `.env` to switch providers. Adjust the model names accordingly.
-
-| Platform | `LLM_PLATFORM` value | Additional env vars needed |
-|----------|----------------------|----------------------------|
-| AWS Bedrock (default) | `bedrock` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
+| Platform | `LLM_PLATFORM` | Required variables |
+|---|---|---|
+| AWS Bedrock | `bedrock` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
 | OpenAI | `openai` | `OPENAI_API_KEY` |
-| Google Vertex AI | `vertex` | `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`, `GCP_REGION` |
+| Google Vertex AI | `vertex` | `GOOGLE_PROJECT_ID`, `GOOGLE_LOCATION` |
 | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_VERSION` |
 
----
+## Open Prompt Manager (OPM)
 
-## Error & Latency Simulation
+SwagBot integrates with [Open Prompt Manager](https://github.com/ale-sanchez-g/open-prompt-manager) to load and version agent prompts at runtime. When OPM is reachable, every agent fetches its prompt from OPM instead of the local `resources/prompt-*.txt` files. If OPM is unreachable or the prompt is not found, SwagBot falls back to the local files automatically — the service keeps running either way.
 
-SwagBot includes a built-in simulation layer for resilience testing and LLM observability demos.
+### What OPM provides
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ERROR_SIMULATION` | `true` | Enable random errors |
-| `ERROR_SIMULATION_RATE` | `0.15` | Fraction of requests that trigger an error (0–1) |
-| `LATENCY_SIMULATION` | `true` | Add artificial latency |
-| `MAX_LATENCY_MS` | `1000` | Maximum added latency in milliseconds |
+- Centralised, versioned storage for all agent prompts.
+- REST API for prompt retrieval (`GET /api/prompts/`) and execution telemetry (`POST /api/prompts/{id}/executions`).
+- A web UI for editing, tagging, and tracking prompt quality metrics.
 
-Set both to `false` / `0` when you want clean production-like behaviour:
+### Running OPM
 
-```dotenv
-ERROR_SIMULATION=false
-LATENCY_SIMULATION=false
+OPM is a separate Docker service. Clone and start it alongside SwagBot:
+
+```bash
+git clone https://github.com/ale-sanchez-g/open-prompt-manager
+cd open-prompt-manager
+docker-compose up -d
 ```
 
+Services started by OPM:
+
+- Backend API: http://localhost:8000/api
+- API docs: http://localhost:8000/api/docs
+- Web UI: http://localhost:80
+
+### Connecting SwagBot to OPM
+
+Set `OPM_BASE_URL` in your `.env` to point to the running OPM backend:
+
+```dotenv
+# Local development (OPM running on the same machine)
+OPM_BASE_URL=http://localhost
+
+# Docker Compose (OPM running on the host, SwagBot in a container)
+OPM_BASE_URL=http://host.docker.internal
+```
+
+The `docker-compose.yml` in this project already sets `OPM_BASE_URL=http://host.docker.internal` so the SwagBot container can reach OPM running on the host without any extra configuration.
+
+### Prompt name mapping
+
+SwagBot looks up each agent prompt in OPM by name:
+
+| Agent | OPM prompt name |
+|---|---|
+| Planning | `planning` |
+| Orchestrator | `orchestrator` |
+| Customer Service | `customer-service` |
+| Product Specialist | `product-specialist` |
+| Promotion Specialist | `promotion-specialist` |
+| Feedback Handler | `feedback-handler` |
+| Response Synthesizer | `synthesizer` |
+
+Create prompts with these exact names in OPM so that SwagBot picks them up automatically.
+
 ---
 
-## Running the Interaction Script
+## Error and Latency Simulation
 
-A ready-made interaction script fires a variety of test requests covering all agent types:
+The workflow supports simulated failures and delay injection.
+
+| Variable | Effect |
+|---|---|
+| `ERROR_SIMULATION` | Enables simulated errors in workflow paths |
+| `ERROR_SIMULATION_RATE` | Error probability (0.0 to 1.0) |
+| `LATENCY_SIMULATION` | Enables injected latency |
+| `MAX_LATENCY_MS` | Maximum artificial delay |
+
+In `docker-compose.yml`, these are enabled by default for demo/observability behavior.
+
+## Interaction Traffic Generator
+
+`app/scripts/interactions-script.sh` runs continuously in a loop and sends diverse requests (including adversarial/sensitive patterns) to generate telemetry.
+
+Run manually:
 
 ```bash
 bash app/scripts/interactions-script.sh
 ```
 
-This script is also executed automatically by the container on startup (after the Flask server starts) so Datadog receives an initial burst of traces.
+Container behavior:
 
----
-
-## Datadog Observability
-
-SwagBot is fully instrumented with:
-
-| Feature | Details |
-|---------|---------|
-| **APM Tracing** | Every request is traced end-to-end via `ddtrace` |
-| **LLM Observability** | Each LLM call is captured with input/output/tokens/latency |
-| **RUM** | Browser session recording and page-load correlation |
-| **Logs** | Structured JSON logs with trace-id injection |
-| **Metrics** | Runtime metrics and custom business metrics |
-| **User Feedback** | Thumbs-up/down evaluations linked to LLM spans |
-
-The Datadog Agent sidecar (`agent` service in `docker-compose.yml`) collects APM traces on port `8126` and ships everything to Datadog.
-
-To verify the agent is healthy:
-
-```bash
-docker compose exec agent agent status
-```
-
----
-
-## Troubleshooting
-
-**Container fails to start**
-
-Check that all required environment variables are set:
-
-```bash
-docker compose config   # shows resolved config with all substitutions
-```
-
-**AWS credentials error**
-
-Ensure `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are exported in your shell or present in your `.env` file, and that the IAM user has `bedrock:InvokeModel` permission for the configured models.
-
-**Datadog traces not appearing**
-
-1. Confirm `DD_API_KEY` is valid.
-2. Check the agent is running: `docker compose ps`.
-3. Verify `DD_AGENT_HOST=agent` is set in the swagbot service — it must resolve to the Datadog Agent container.
-
-**Port 3000 already in use**
-
-```bash
-lsof -i :3000        # find the process
-kill -9 <PID>
-docker compose up -d
-```
-
+- The `swagbot` service entrypoint starts Flask, waits briefly, then launches this script.
+- The script keeps running (it is not a one-time startup burst).
 
 ## Experiments
 
-The `swagbot_utils_experiments.py` script contains utilities for dataset creation, evaluation, and other experiments. For example, to create a dataset of 100 requests related to the "product specialist" category:
+`app/swagbot_utils_experiments.py` provides model and dataset tooling:
+
+- List models: `--list-models`
+- List datasets: `--list-datasets`
+- Create all datasets: `--create-datasets`
+- Create one dataset: `--create-dataset {customer_service|product_specialist|promotion_specialist|comprehensive}`
+- Compare one model: `--model-comparison <model_key>`
+- Compare selected models: `--compare-models <k1> <k2> ...`
+- Compare all models: `--compare-all-models`
+- Use direct-agent mode: `--direct-agent`
+
+Examples:
 
 ```bash
-docker compose exec swagbot python /app/swagbot_utils_experiments.py --create-dataset product_specialist
-```
+docker compose exec swagbot python /app/swagbot_utils_experiments.py --list-models
 
-To compare the performance of all three agents (customer service, product specialist, promotion specialist) on the "product specialist" dataset using direct agent prompting:
+docker compose exec swagbot python /app/swagbot_utils_experiments.py \
+  --create-dataset product_specialist
 
-```bash
 docker compose exec swagbot python /app/swagbot_utils_experiments.py \
   --compare-all-models \
   --dataset product_specialist \
   --direct-agent
-  ```
+```
+
+## Project Structure
+
+```
+langgraph-demo/
+├── docker-compose.yml
+├── restart-bot.sh
+├── restart-containers.sh
+└── app/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── swagbot_app.py
+    ├── swagbot_langgraph_config.py
+    ├── swagbot_langgraph_workflow.py
+    ├── swagbot_utils.py
+    ├── swagbot_utils_experiments.py
+    ├── resources/
+    │   ├── products.json
+    │   ├── promotions.json
+    │   ├── faqs.json
+    │   ├── cs_info.json
+    │   ├── sample-requests.txt
+    │   ├── prompt-planning.txt
+    │   ├── prompt-orchestrator.txt
+    │   ├── prompt-customer-service.txt
+    │   ├── prompt-product-specialist.txt
+    │   ├── prompt-promotion-specialist.txt
+    │   ├── prompt-feedback-handler.txt
+    │   ├── prompt-synthesizer.txt
+    │   └── prompt-metadata.json
+    ├── scripts/
+    │   └── interactions-script.sh
+    ├── static/
+    │   └── images/
+    └── templates/
+        └── index.html
+```
+
+## Troubleshooting
+
+### Containers fail to start
+
+```bash
+docker compose config
+docker compose ps
+docker compose logs swagbot --tail=200
+```
+
+### Datadog traces or eval submissions missing
+
+1. Confirm `DD_API_KEY` is set.
+2. Confirm agent is healthy: `docker compose exec agent agent status`.
+3. Confirm `DD_SITE` matches your Datadog region.
+4. For `/api/evaluate`, confirm payload includes valid `span_context` and `evaluation_type`.
+
+### Port 3000 conflict
+
+```bash
+lsof -i :3000
+kill -9 <PID>
+docker compose up -d
+```
