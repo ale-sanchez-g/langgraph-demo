@@ -38,6 +38,9 @@ class LangChainConfig:
         self.FLASK_PORT = int(os.getenv("FLASK_PORT", 3000))
         self.FLASK_DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
         
+        # OPM (Open Prompt Management) Configuration
+        self.opm_base_url = os.getenv("OPM_BASE_URL", "http://localhost")
+
         # Error Simulation
         self.error_simulation_enabled = os.getenv("ERROR_SIMULATION", "false").lower() == "true"
         self.error_simulation_rate = float(os.getenv("ERROR_SIMULATION_RATE", "0.1"))  # 10% default
@@ -142,7 +145,8 @@ class LangChainConfig:
             logger.info(f"   🐌 Latency Simulation: {self.latency_simulation_enabled}")
             logger.info(f"   ⏱️ Max Latency: {self.max_latency_ms}ms")
         else:
-            logger.info("🔥 Error Simulation DISABLED")
+            logger.info(f"   🔥 Error Simulation DISABLED")
+        logger.info(f"   📦 OPM Base URL: {self.opm_base_url}")
     
     def get_planning_config(self) -> Dict[str, Any]:
         """Get planning agent model configuration for the current platform"""

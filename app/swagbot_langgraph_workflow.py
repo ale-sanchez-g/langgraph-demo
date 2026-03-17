@@ -30,7 +30,7 @@ from langgraph.types import Send
 from swagbot_langgraph_config import LangChainConfig
 from swagbot_utils import (DocumentUtils, HTMLUtils, DocumentHandlers, CostCalculationUtils, LangGraphUtils,
                            VertexInstrumentationUtils, DocumentRetrievalUtils, ParsingUtils, KnowledgeBaseUtils,
-                           SynthesisUtils, PromptTrackingUtils)
+                           SynthesisUtils, PromptTrackingUtils, OPMTelemetryUtils)
 
 # Datadog LLM Observability decorators
 from ddtrace.llmobs.decorators import agent, workflow, retrieval, llm, task, tool
@@ -258,7 +258,7 @@ class SwagBotWorkflow:
         
         try:
             # Load planning prompt with metadata
-            prompt_data = PromptTrackingUtils.load_prompt_with_metadata("planning")
+            prompt_data = PromptTrackingUtils.load_prompt_with_metadata("planning", opm_base_url=config.opm_base_url)
             planning_prompt = prompt_data["template"]
             
             # Build prompt variables
@@ -270,6 +270,7 @@ class SwagBotWorkflow:
             full_prompt = f"{planning_prompt}\n\nUser Request: {state['input']}\n\nProvide your analysis as JSON:"
             
             # Execute planning LLM call with instrumentation and prompt tracking
+            _plan_start = time.time()
             response = self.llm_caller.call_planning_llm(
                 prompt=full_prompt,
                 user_request=state['input'],
@@ -278,7 +279,21 @@ class SwagBotWorkflow:
                 prompt_version=prompt_data["version"],
                 prompt_variables=prompt_variables
             )
-            
+            _plan_elapsed_ms = int((time.time() - _plan_start) * 1000)
+
+            # Send OPM execution telemetry
+            _plan_opm_id = OPMTelemetryUtils.get_prompt_id("planning")
+            if _plan_opm_id:
+                OPMTelemetryUtils.record_execution(
+                    prompt_id=_plan_opm_id,
+                    rendered_prompt=full_prompt,
+                    response=response,
+                    execution_time_ms=_plan_elapsed_ms,
+                    input_variables=prompt_variables,
+                    metadata={"agent_type": "planning", "prompt_version": prompt_data["version"]},
+                    opm_base_url=config.opm_base_url,
+                )
+
             # Parse JSON response with fallback
             planning_result = self._parse_planning_response(response, state['input'])
             
@@ -588,6 +603,7 @@ class SwagBotWorkflow:
                 )
                 raise error
 
+            _synth_start = time.time()
             if len(agent_responses) == 1:
                 # Single agent response - light enhancement
                 single_response = list(agent_responses.values())[0]
@@ -597,7 +613,22 @@ class SwagBotWorkflow:
                 final_response = self._synthesize_multi_agent_responses(
                     agent_responses, agent_contexts, user_request
                 )
-            
+            _synth_elapsed_ms = int((time.time() - _synth_start) * 1000)
+
+            # Send OPM execution telemetry
+            _synth_opm_id = OPMTelemetryUtils.get_prompt_id("synthesizer")
+            if _synth_opm_id:
+                OPMTelemetryUtils.record_execution(
+                    prompt_id=_synth_opm_id,
+                    rendered_prompt=self.synthesizer_prompt,
+                    response=final_response,
+                    execution_time_ms=_synth_elapsed_ms,
+                    input_variables={"user_request": user_request, "agent_count": len(agent_responses)},
+                    token_count=total_tokens,
+                    metadata={"agent_type": "synthesizer", "agents_combined": list(agent_responses.keys())},
+                    opm_base_url=config.opm_base_url,
+                )
+
             return {
                 "output": final_response,
                 "workflow_path": ["Response Synthesizer"]
@@ -671,7 +702,7 @@ class SwagBotWorkflow:
         reasoning = planning_result.get("reasoning", "")
         
         # Load orchestrator prompt with metadata
-        prompt_data = PromptTrackingUtils.load_prompt_with_metadata("orchestrator")
+        prompt_data = PromptTrackingUtils.load_prompt_with_metadata("orchestrator", opm_base_url=config.opm_base_url)
         orchestrator_prompt = prompt_data["template"]
         
         # Build prompt variables
@@ -731,7 +762,7 @@ class SwagBotWorkflow:
             
             # Load prompt metadata for tracking
             agent_type_normalized = agent_type.replace("_", "-")
-            prompt_data = PromptTrackingUtils.load_prompt_with_metadata(agent_type_normalized)
+            prompt_data = PromptTrackingUtils.load_prompt_with_metadata(agent_type_normalized, opm_base_url=config.opm_base_url)
             
             # Build prompt variables
             prompt_variables = {
@@ -755,6 +786,7 @@ Response:"""
             logger.info(f"   Original request (for annotation): {original_request}")
             
             # Execute LLM call with comprehensive instrumentation and prompt tracking
+            _rag_start = time.time()
             response = self.llm_caller.call_agent_llm(
                 prompt=full_prompt,
                 agent_name=agent_type,
@@ -766,7 +798,21 @@ Response:"""
                 prompt_version=prompt_data["version"],
                 prompt_variables=prompt_variables
             )
-            
+            _rag_elapsed_ms = int((time.time() - _rag_start) * 1000)
+
+            # Send OPM execution telemetry
+            _rag_opm_id = OPMTelemetryUtils.get_prompt_id(agent_type_normalized)
+            if _rag_opm_id:
+                OPMTelemetryUtils.record_execution(
+                    prompt_id=_rag_opm_id,
+                    rendered_prompt=full_prompt,
+                    response=response,
+                    execution_time_ms=_rag_elapsed_ms,
+                    input_variables=prompt_variables,
+                    metadata={"agent_type": agent_type, "prompt_version": prompt_data["version"]},
+                    opm_base_url=config.opm_base_url,
+                )
+
             return response
             
         except Exception as e:
@@ -780,7 +826,8 @@ Response:"""
             user_request=user_request,
             synthesizer_prompt=self.synthesizer_prompt,
             agent_contexts=agent_contexts,
-            llm_caller=self.llm_caller
+            llm_caller=self.llm_caller,
+            opm_base_url=config.opm_base_url
         )
     
     def _synthesize_multi_agent_responses(self, agent_responses: Dict[str, str], 
@@ -792,7 +839,8 @@ Response:"""
             agent_contexts=agent_contexts,
             user_request=user_request,
             synthesizer_prompt=self.synthesizer_prompt,
-            llm_caller=self.llm_caller
+            llm_caller=self.llm_caller,
+            opm_base_url=config.opm_base_url
         )
 
     def _error_handler(self, state: WorkflowState) -> WorkflowState:
@@ -846,9 +894,8 @@ Response:"""
     
     @tool(name="load_agent_prompt")
     def _load_agent_prompt(self, agent_type: str) -> str:
-        """Load agent-specific prompt from file with fallback."""
-        resources_dir = os.path.join(os.path.dirname(__file__), "resources")
-        return SynthesisUtils.load_agent_prompt(agent_type, resources_dir)
+        """Load agent-specific prompt from OPM API with fallback to file."""
+        return SynthesisUtils.load_agent_prompt_from_opm(agent_type, config.opm_base_url)
     
     @task(name="parse_planning_response")
     def _parse_planning_response(self, response: str, user_request: str) -> Dict[str, Any]:

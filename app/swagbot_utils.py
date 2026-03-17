@@ -12,9 +12,15 @@ import os
 import json
 import re
 import logging
-from typing import Dict, Any, List
+import urllib.request
+import urllib.parse
+import urllib.error
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Module-level OPM prompt ID cache - populated by load_agent_prompt_from_opm at load time
+_opm_prompt_id_cache: Dict[str, int] = {}
 
 
 class LangGraphUtils:
@@ -864,13 +870,14 @@ class PromptTrackingUtils:
         }
     
     @staticmethod
-    def load_prompt_with_metadata(agent_type: str, resources_dir: str = None) -> Dict[str, Any]:
-        """Load prompt content with tracking metadata."""
+    def load_prompt_with_metadata(agent_type: str, resources_dir: str = None,
+                                  opm_base_url: str = "http://localhost") -> Dict[str, Any]:
+        """Load prompt content with tracking metadata, preferring OPM over local files."""
         if resources_dir is None:
             resources_dir = os.path.join(os.path.dirname(__file__), "resources")
         
-        # Load the prompt template
-        template = SynthesisUtils.load_agent_prompt(agent_type, resources_dir)
+        # Load the prompt template from OPM (falls back to file automatically)
+        template = SynthesisUtils.load_agent_prompt_from_opm(agent_type, opm_base_url)
         
         # Get metadata
         metadata = PromptTrackingUtils.get_prompt_metadata(agent_type, resources_dir)
@@ -881,6 +888,63 @@ class PromptTrackingUtils:
             "version": metadata["version"],
             "description": metadata.get("description", "")
         }
+
+
+class OPMTelemetryUtils:
+    """Utilities for recording prompt execution telemetry to OPM."""
+
+    @staticmethod
+    def get_prompt_id(agent_type: str) -> Optional[int]:
+        """Return the cached OPM prompt ID for an agent type, or None if not loaded from OPM."""
+        return _opm_prompt_id_cache.get(agent_type)
+
+    @staticmethod
+    def record_execution(
+        prompt_id: int,
+        rendered_prompt: str,
+        response: str,
+        execution_time_ms: int,
+        input_variables: Dict[str, Any] = None,
+        token_count: int = None,
+        cost: float = None,
+        success: int = 1,
+        rating: int = None,
+        metadata: Dict[str, Any] = None,
+        opm_base_url: str = "http://localhost",
+    ) -> None:
+        """Fire-and-forget: POST execution telemetry to /api/prompts/{id}/executions."""
+        try:
+            if token_count is None:
+                token_count = (len(rendered_prompt) + len(response)) // 4
+
+            payload: Dict[str, Any] = {
+                "rendered_prompt": rendered_prompt,
+                "response": response,
+                "execution_time_ms": execution_time_ms,
+                "token_count": token_count,
+                "success": success,
+            }
+            if input_variables is not None:
+                payload["input_variables"] = input_variables
+            if cost is not None:
+                payload["cost"] = cost
+            if rating is not None:
+                payload["rating"] = rating
+            if metadata is not None:
+                payload["metadata"] = metadata
+
+            url = f"{opm_base_url}/api/prompts/{prompt_id}/executions"
+            body = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:  # noqa: S310
+                logger.debug(f"📊 OPM execution recorded for prompt {prompt_id} (HTTP {resp.status})")
+        except Exception as exc:
+            logger.debug(f"📊 OPM telemetry skipped for prompt {prompt_id}: {exc}")
 
 
 class SynthesisUtils:
@@ -935,8 +999,83 @@ Example: {"product_specialist": "What's the price?", "promotion_specialist": "An
             return fallbacks.get(agent_type, f"You are a helpful {agent_type.replace('-', ' ')} assistant.")
     
     @staticmethod
+    def load_agent_prompt_from_opm(agent_type: str, opm_base_url: str = "http://localhost") -> str:
+        """Load agent-specific prompt from OPM API with fallback to file-based loading.
+
+        Maps agent_type to the corresponding OPM prompt name, searches for it via the
+        OPM REST API, and returns the prompt content string. Falls back to
+        load_agent_prompt() if OPM is unreachable or the prompt is not found.
+        """
+        name_map = {
+            "planning":            "SwagBot Planning Agent",
+            "orchestrator":        "SwagBot Orchestrator",
+            "customer-service":    "SwagBot Customer Service",
+            "customer_service":    "SwagBot Customer Service",
+            "product-specialist":  "SwagBot Product Specialist",
+            "product_specialist":  "SwagBot Product Specialist",
+            "promotion-specialist": "SwagBot Promotion Specialist",
+            "promotion_specialist": "SwagBot Promotion Specialist",
+            "feedback-handler":    "SwagBot Feedback Handler",
+            "feedback_handler":    "SwagBot Feedback Handler",
+            "synthesizer":         "SwagBot Response Synthesizer",
+        }
+
+        prompt_name = name_map.get(agent_type)
+        if not prompt_name:
+            logger.warning(f"🔍 No OPM name mapping for agent_type '{agent_type}', falling back to file")
+            return SynthesisUtils.load_agent_prompt(agent_type)
+
+        try:
+            # Step 1: search for the prompt by name to get its ID
+            search_params = urllib.parse.urlencode({"search": prompt_name, "limit": 10})
+            search_url = f"{opm_base_url}/api/prompts/?{search_params}"
+            logger.info(f"🌐 Searching OPM for prompt '{prompt_name}' at {search_url}")
+
+            with urllib.request.urlopen(search_url, timeout=5) as resp:  # noqa: S310
+                search_results = json.loads(resp.read().decode())
+
+            # Find exact name match
+            prompt_id = None
+            for item in search_results:
+                if item.get("name") == prompt_name:
+                    prompt_id = item["id"]
+                    break
+
+            if prompt_id is None:
+                logger.warning(f"🔍 Prompt '{prompt_name}' not found in OPM, falling back to file")
+                return SynthesisUtils.load_agent_prompt(agent_type)
+
+            # Cache the prompt ID so telemetry can reference it later
+            _opm_prompt_id_cache[agent_type] = prompt_id
+
+            # Step 2: fetch full prompt (includes content)
+            detail_url = f"{opm_base_url}/api/prompts/{prompt_id}"
+            logger.info(f"🌐 Fetching OPM prompt id={prompt_id} from {detail_url}")
+
+            with urllib.request.urlopen(detail_url, timeout=5) as resp:  # noqa: S310
+                prompt_data = json.loads(resp.read().decode())
+
+            content = prompt_data.get("content", "")
+            version = prompt_data.get("version", "unknown")
+            content_length = len(content)
+            token_estimate = content_length // 4
+            logger.info(
+                f"✅ Loaded '{prompt_name}' v{version} from OPM "
+                f"({content_length} chars ≈ {token_estimate} tokens)"
+            )
+            return content
+
+        except urllib.error.URLError as exc:
+            logger.warning(f"⚠️  OPM unreachable ({exc}), falling back to file for '{agent_type}'")
+            return SynthesisUtils.load_agent_prompt(agent_type)
+        except Exception as exc:
+            logger.warning(f"⚠️  OPM error ({exc}), falling back to file for '{agent_type}'")
+            return SynthesisUtils.load_agent_prompt(agent_type)
+
+    @staticmethod
     def enhance_single_response(response: str, user_request: str, synthesizer_prompt: str,
-                               agent_contexts: Dict[str, List[Dict[str, Any]]], llm_caller) -> str:
+                               agent_contexts: Dict[str, List[Dict[str, Any]]], llm_caller,
+                               opm_base_url: str = "http://localhost") -> str:
         """Enhance single agent response using original user request."""
         try:
             # Collect documents from the single agent for context
@@ -957,7 +1096,7 @@ Example: {"product_specialist": "What's the price?", "promotion_specialist": "An
                 logger.info(f"📚 Including {len(all_documents[:10])} source documents in synthesizer context")
             
             # Load prompt metadata for tracking
-            prompt_data = PromptTrackingUtils.load_prompt_with_metadata("synthesizer")
+            prompt_data = PromptTrackingUtils.load_prompt_with_metadata("synthesizer", opm_base_url=opm_base_url)
             
             # Build prompt variables
             prompt_variables = {
@@ -997,7 +1136,8 @@ Enhanced Response:"""
     @staticmethod
     def synthesize_multi_agent_responses(agent_responses: Dict[str, str], 
                                         agent_contexts: Dict[str, List[Dict[str, Any]]], 
-                                        user_request: str, synthesizer_prompt: str, llm_caller) -> str:
+                                        user_request: str, synthesizer_prompt: str, llm_caller,
+                                        opm_base_url: str = "http://localhost") -> str:
         """Combine multiple agent responses to address original user request."""
         try:
             # Collect all documents from specialized agents
@@ -1033,7 +1173,7 @@ Enhanced Response:"""
                 logger.info(f"📚 Including {len(all_documents[:10])} source documents in synthesizer context")
             
             # Load prompt metadata for tracking
-            prompt_data = PromptTrackingUtils.load_prompt_with_metadata("synthesizer")
+            prompt_data = PromptTrackingUtils.load_prompt_with_metadata("synthesizer", opm_base_url=opm_base_url)
             
             # Build prompt variables
             prompt_variables = {
