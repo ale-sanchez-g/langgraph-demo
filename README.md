@@ -113,6 +113,11 @@ ERROR_SIMULATION=true
 ERROR_SIMULATION_RATE=0.15
 LATENCY_SIMULATION=true
 MAX_LATENCY_MS=1000
+
+# Docker image control
+SWAGBOT_IMAGE_NAME=swagbot
+SWAGBOT_IMAGE_TAG=local
+SWAGBOT_BASE_IMAGE=python:3.11-slim
 ```
 
 Notes:
@@ -123,12 +128,22 @@ Notes:
 ## Quick Start
 
 ```bash
+# Build swagbot image locally (recommended after dependency or base image changes)
+docker compose build swagbot
+
 # Start all services
 docker compose up -d
 
 # Or use helper scripts
 ./restart-containers.sh
 ./restart-bot.sh
+```
+
+To patch the base image version (for example, after a security advisory), update `SWAGBOT_BASE_IMAGE` in your `.env` and rebuild:
+
+```bash
+docker compose build --no-cache swagbot
+docker compose up -d swagbot
 ```
 
 Services:

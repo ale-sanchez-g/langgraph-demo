@@ -1,6 +1,11 @@
 services:
   swagbot:
-    image: public.ecr.aws/v6x4t1k2/dpn-workshops/swagbot:langgraph.v0.6
+    image: ${SWAGBOT_IMAGE_NAME:-swagbot}:${SWAGBOT_IMAGE_TAG:-local}
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${SWAGBOT_BASE_IMAGE:-python:3.11-slim}
     platform: linux/amd64
     environment:
       ## FLASK Configs:

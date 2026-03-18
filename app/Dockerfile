@@ -1,5 +1,6 @@
 # SwagBot LangGraph Implementation with Datadog LLM Observability
-FROM python:3.11-slim
+ARG PYTHON_BASE_IMAGE=python:3.11-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 # Set working directory
 WORKDIR /app
